@@ -37,7 +37,8 @@ namespace FbxProcessor
         const std::wstring& inputPath,
         const std::wstring& outputPath,
         ResizeAxis axis,
-        double scaleFactor);
+        double scaleFactor,
+        const std::vector<std::wstring>& metadataPropertyNames = {});
 
     // Get detailed error message
     std::wstring GetLastError();

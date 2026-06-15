@@ -13,6 +13,7 @@ namespace FbxProcessor
     FbxIOSettings* g_fbxIoSettings = nullptr;
     std::wstring g_lastError;
     std::vector<std::wstring> g_metadataLogs;  // Collect metadata scaling logs
+    std::vector<std::wstring> g_metadataPropertyNames;  // User-specified property names
 
     // Helper function to convert wstring to string
     std::string WStringToString(const std::wstring& wstr)
@@ -80,7 +81,8 @@ namespace FbxProcessor
         const std::wstring& inputPath,
         const std::wstring& outputPath,
         ResizeAxis axis,
-        double scaleFactor)
+        double scaleFactor,
+        const std::vector<std::wstring>& metadataPropertyNames)
     {
         ProcessResult result;
         result.inputFile = inputPath;
@@ -89,6 +91,9 @@ namespace FbxProcessor
 
         // Clear previous metadata logs
         g_metadataLogs.clear();
+
+        // Store property names for ScaleCustomProperties to use
+        g_metadataPropertyNames = metadataPropertyNames;
 
         // Check if input file exists
         if (!fs::exists(inputPath))
@@ -309,38 +314,16 @@ namespace FbxProcessor
                 if (dataType.GetType() == eFbxDouble || dataType.GetType() == eFbxFloat)
                 {
                     bool shouldScale = false;
-                    std::string axisName;
 
-                    // Check if property name matches the axis being scaled
-                    if (axis == ResizeAxis::Y)
+                    // Check if property name matches any user-specified property names (case-insensitive)
+                    std::wstring propNameWStr = StringToWString(propNameStr);
+                    for (const auto& userPropName : g_metadataPropertyNames)
                     {
-                        axisName = "Y";
-                        // Scale "height" property when scaling Y axis
-                        if (propNameStr == "height" || propNameStr == "Height" || 
-                            propNameStr == "HEIGHT" || propNameStr == "y" || propNameStr == "Y")
+                        // Case-insensitive comparison
+                        if (_wcsicmp(propNameWStr.c_str(), userPropName.c_str()) == 0)
                         {
                             shouldScale = true;
-                        }
-                    }
-                    else if (axis == ResizeAxis::X)
-                    {
-                        axisName = "X";
-                        // Scale width/x properties when scaling X axis
-                        if (propNameStr == "width" || propNameStr == "Width" || 
-                            propNameStr == "WIDTH" || propNameStr == "x" || propNameStr == "X")
-                        {
-                            shouldScale = true;
-                        }
-                    }
-                    else if (axis == ResizeAxis::Z)
-                    {
-                        axisName = "Z";
-                        // Scale depth/z properties when scaling Z axis
-                        if (propNameStr == "depth" || propNameStr == "Depth" || 
-                            propNameStr == "DEPTH" || propNameStr == "z" || propNameStr == "Z" ||
-                            propNameStr == "length" || propNameStr == "Length" || propNameStr == "LENGTH")
-                        {
-                            shouldScale = true;
+                            break;
                         }
                     }
 

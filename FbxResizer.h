@@ -27,7 +27,11 @@
 #define IDC_EDIT_RESIZE_FACTOR      1008
 #define IDC_BTN_PROCESS             1009
 #define IDC_EDIT_LOG                1010
+#define IDC_EDIT_METADATA_X         1011
+#define IDC_EDIT_METADATA_Y         1012
+#define IDC_EDIT_METADATA_Z         1013
+#define IDC_BTN_RESET               1014
 
 // Window dimensions
 #define WINDOW_WIDTH                700
-#define WINDOW_HEIGHT               620
+#define WINDOW_HEIGHT               820
