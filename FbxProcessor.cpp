@@ -219,12 +219,9 @@ namespace FbxProcessor
             ScaleMesh(mesh, axis, scaleFactor);
         }
 
-        // Process skeleton
-        FbxSkeleton* skeleton = node->GetSkeleton();
-        if (skeleton)
-        {
-            ScaleSkeleton(node, axis, scaleFactor);
-        }
+        // Scale the node's local translation (for all nodes, not just skeleton bones)
+        // This ensures bones, locators, and other transform nodes are scaled
+        ScaleSkeleton(node, axis, scaleFactor);
 
         // Process custom properties (metadata) on all nodes
         ScaleCustomProperties(node, axis, scaleFactor);
