@@ -40,6 +40,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	wcex.style = CS_HREDRAW | CS_VREDRAW;
 	wcex.lpfnWndProc = WndProc;
 	wcex.hInstance = hInstance;
+	wcex.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+	wcex.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
 	wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
 	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	wcex.lpszClassName = L"FBXFileResizerClass";
@@ -54,8 +56,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	HWND hWnd = CreateWindowExW(
 		0,
 		L"FBXFileResizerClass",
-		L"FBX File Resizer",
-		WS_OVERLAPPEDWINDOW,
+		L"FBX RESIZER",
+		WS_OVERLAPPEDWINDOW | WS_CAPTION | WS_SYSMENU,
 		CW_USEDEFAULT, CW_USEDEFAULT,
 		WINDOW_WIDTH, WINDOW_HEIGHT,
 		nullptr, nullptr, hInstance, nullptr);
@@ -65,6 +67,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		MessageBoxW(NULL, L"Window Creation Failed!", L"Error", MB_ICONEXCLAMATION | MB_OK);
 		return 0;
 	}
+
+	// Explicitly set window title to ensure it displays correctly
+	SetWindowTextW(hWnd, L"FBX RESIZER");
 
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
@@ -85,6 +90,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	switch (message)
 	{
 	case WM_CREATE:
+		SetWindowTextW(hWnd, L"FBX RESIZER");
 		CreateControls(hWnd);
 		break;
 
@@ -385,16 +391,21 @@ void ProcessFBXFiles(HWND hWnd)
 			{
 				std::wstring filename = entry.path().stem().wstring();
 
-				// Skip files that already have "_Resized_" in their name
+				// Skip files that already have "_Resized_" in their name to prevent cascading
 				if (filename.find(L"_Resized_") != std::wstring::npos)
 				{
-					LogMessage(L"Skipping (already resized): " + filename + L".fbx");
 					skippedCount++;
 					continue;
 				}
 
 				std::wstring outputFilename = filename + L"_Resized_" + axis + L"_" + formattedFactor + L".fbx";
 				std::wstring outputPath = entry.path().parent_path().wstring() + L"\\" + outputFilename;
+
+				// Check if output file already exists and will be overwritten
+				if (fs::exists(outputPath))
+				{
+					LogMessage(L"Overwriting: " + outputFilename);
+				}
 
 				LogMessage(L"Processing: " + filename + L".fbx");
 
@@ -408,6 +419,13 @@ void ProcessFBXFiles(HWND hWnd)
 				if (result.success)
 				{
 					LogMessage(L"  ✓ Output: " + outputFilename);
+
+					// Log metadata scaling if any occurred
+					for (const auto& metadataLog : result.metadataLogs)
+					{
+						LogMessage(metadataLog);
+					}
+
 					successCount++;
 				}
 				else
@@ -424,7 +442,10 @@ void ProcessFBXFiles(HWND hWnd)
 		LogMessage(L"Total files processed: " + std::to_wstring(processedCount));
 		LogMessage(L"Successful: " + std::to_wstring(successCount));
 		LogMessage(L"Failed: " + std::to_wstring(processedCount - successCount));
-		LogMessage(L"Skipped (already resized): " + std::to_wstring(skippedCount));
+		if (skippedCount > 0)
+		{
+			LogMessage(L"Skipped (already resized): " + std::to_wstring(skippedCount));
+		}
 
 		// Cleanup FBX SDK
 		FbxProcessor::CleanupFbxSdk();
@@ -432,8 +453,12 @@ void ProcessFBXFiles(HWND hWnd)
 		std::wstring message = L"Processing complete!\n\nFiles processed: " + 
 			std::to_wstring(processedCount) + L"\nSuccessful: " + 
 			std::to_wstring(successCount) + L"\nFailed: " + 
-			std::to_wstring(processedCount - successCount) + L"\nSkipped: " + 
-			std::to_wstring(skippedCount);
+			std::to_wstring(processedCount - successCount);
+
+		if (skippedCount > 0)
+		{
+			message += L"\nSkipped: " + std::to_wstring(skippedCount);
+		}
 
 		MessageBoxW(hWnd, message.c_str(), L"Success", MB_OK | MB_ICONINFORMATION);
 	}

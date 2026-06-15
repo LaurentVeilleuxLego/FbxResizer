@@ -12,6 +12,7 @@ namespace FbxProcessor
     FbxManager* g_fbxManager = nullptr;
     FbxIOSettings* g_fbxIoSettings = nullptr;
     std::wstring g_lastError;
+    std::vector<std::wstring> g_metadataLogs;  // Collect metadata scaling logs
 
     // Helper function to convert wstring to string
     std::string WStringToString(const std::wstring& wstr)
@@ -37,6 +38,7 @@ namespace FbxProcessor
     void ProcessNode(FbxNode* node, ResizeAxis axis, double scaleFactor);
     void ScaleMesh(FbxMesh* mesh, ResizeAxis axis, double scaleFactor);
     void ScaleSkeleton(FbxNode* node, ResizeAxis axis, double scaleFactor);
+    void ScaleCustomProperties(FbxNode* node, ResizeAxis axis, double scaleFactor);
 
     bool InitializeFbxSdk(const std::wstring& sdkPath)
     {
@@ -84,6 +86,9 @@ namespace FbxProcessor
         result.inputFile = inputPath;
         result.outputFile = outputPath;
         result.success = false;
+
+        // Clear previous metadata logs
+        g_metadataLogs.clear();
 
         // Check if input file exists
         if (!fs::exists(inputPath))
@@ -188,6 +193,7 @@ namespace FbxProcessor
 
             result.success = true;
             result.message = L"Successfully processed";
+            result.metadataLogs = g_metadataLogs;  // Copy collected metadata logs
         }
         catch (const std::exception& e)
         {
@@ -219,6 +225,9 @@ namespace FbxProcessor
         {
             ScaleSkeleton(node, axis, scaleFactor);
         }
+
+        // Process custom properties (metadata) on all nodes
+        ScaleCustomProperties(node, axis, scaleFactor);
 
         // Recursively process children
         for (int i = 0; i < node->GetChildCount(); ++i)
@@ -272,6 +281,105 @@ namespace FbxProcessor
         }
 
         node->LclTranslation.Set(translation);
+    }
+
+    void ScaleCustomProperties(FbxNode* node, ResizeAxis axis, double scaleFactor)
+    {
+        if (!node) return;
+
+        // Get node name for logging
+        const char* nodeName = node->GetName();
+        std::string nodeNameStr = nodeName ? nodeName : "Unknown";
+
+        // Get the first property of the node
+        FbxProperty prop = node->GetFirstProperty();
+
+        while (prop.IsValid())
+        {
+            // Get property name
+            FbxString propName = prop.GetName();
+            std::string propNameStr = propName.Buffer();
+
+            // Check if this is a custom property (user-defined)
+            bool isUserProperty = prop.GetFlag(FbxPropertyFlags::eUserDefined);
+
+            // Process numeric properties that match axis-related names
+            if (isUserProperty)
+            {
+                FbxDataType dataType = prop.GetPropertyDataType();
+
+                // Handle different numeric types
+                if (dataType.GetType() == eFbxDouble || dataType.GetType() == eFbxFloat)
+                {
+                    bool shouldScale = false;
+                    std::string axisName;
+
+                    // Check if property name matches the axis being scaled
+                    if (axis == ResizeAxis::Y)
+                    {
+                        axisName = "Y";
+                        // Scale "height" property when scaling Y axis
+                        if (propNameStr == "height" || propNameStr == "Height" || 
+                            propNameStr == "HEIGHT" || propNameStr == "y" || propNameStr == "Y")
+                        {
+                            shouldScale = true;
+                        }
+                    }
+                    else if (axis == ResizeAxis::X)
+                    {
+                        axisName = "X";
+                        // Scale width/x properties when scaling X axis
+                        if (propNameStr == "width" || propNameStr == "Width" || 
+                            propNameStr == "WIDTH" || propNameStr == "x" || propNameStr == "X")
+                        {
+                            shouldScale = true;
+                        }
+                    }
+                    else if (axis == ResizeAxis::Z)
+                    {
+                        axisName = "Z";
+                        // Scale depth/z properties when scaling Z axis
+                        if (propNameStr == "depth" || propNameStr == "Depth" || 
+                            propNameStr == "DEPTH" || propNameStr == "z" || propNameStr == "Z" ||
+                            propNameStr == "length" || propNameStr == "Length" || propNameStr == "LENGTH")
+                        {
+                            shouldScale = true;
+                        }
+                    }
+
+                    if (shouldScale)
+                    {
+                        if (dataType.GetType() == eFbxDouble)
+                        {
+                            FbxDouble oldValue = prop.Get<FbxDouble>();
+                            FbxDouble newValue = oldValue * scaleFactor;
+                            prop.Set<FbxDouble>(newValue);
+
+                            // Create log message for UI
+                            wchar_t logMsg[512];
+                            swprintf_s(logMsg, L"    [Metadata] Node '%S': '%S' = %.3f -> %.3f",
+                                nodeNameStr.c_str(), propNameStr.c_str(), oldValue, newValue);
+                            g_metadataLogs.push_back(logMsg);
+                        }
+                        else if (dataType.GetType() == eFbxFloat)
+                        {
+                            FbxFloat oldValue = prop.Get<FbxFloat>();
+                            FbxFloat newValue = (FbxFloat)(oldValue * scaleFactor);
+                            prop.Set<FbxFloat>(newValue);
+
+                            // Create log message for UI
+                            wchar_t logMsg[512];
+                            swprintf_s(logMsg, L"    [Metadata] Node '%S': '%S' = %.3f -> %.3f",
+                                nodeNameStr.c_str(), propNameStr.c_str(), (double)oldValue, (double)newValue);
+                            g_metadataLogs.push_back(logMsg);
+                        }
+                    }
+                }
+            }
+
+            // Move to next property
+            prop = node->GetNextProperty(prop);
+        }
     }
 
     std::wstring GetLastError()

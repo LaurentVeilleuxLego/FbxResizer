@@ -23,6 +23,7 @@ namespace FbxProcessor
         std::wstring message;
         std::wstring inputFile;
         std::wstring outputFile;
+        std::vector<std::wstring> metadataLogs;  // Log messages for scaled metadata
     };
 
     // Initialize FBX SDK
