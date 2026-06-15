@@ -40,7 +40,7 @@ void SetRegistryInt(const wchar_t* valueName, int value);
 // Registry key for settings
 const wchar_t* REG_KEY_PATH = L"Software\\FBXResizer";
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
 {
 	// Initialize common controls
 	INITCOMMONCONTROLSEX icex;

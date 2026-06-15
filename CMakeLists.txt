@@ -47,6 +47,8 @@ target_link_libraries(FbxResizer PRIVATE
 # Add compiler definitions
 target_compile_definitions(FbxResizer PRIVATE 
     FBXSDK_SHARED
+    UNICODE
+    _UNICODE
 )
 
 # Copy FBX SDK DLL to output directory
