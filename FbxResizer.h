@@ -24,10 +24,11 @@
 #define IDC_LISTBOX_CONFIGS         1005
 #define IDC_COMBO_AXIS              1006
 #define IDC_EDIT_FACTOR             1007
-#define IDC_BTN_ADD_CONFIG          1008
-#define IDC_BTN_REMOVE_CONFIG       1009
-#define IDC_BTN_PROCESS             1010
-#define IDC_EDIT_LOG                1011
+#define IDC_EDIT_ROTATION           1008
+#define IDC_BTN_ADD_CONFIG          1009
+#define IDC_BTN_REMOVE_CONFIG       1010
+#define IDC_BTN_PROCESS             1011
+#define IDC_EDIT_LOG                1012
 #define IDC_EDIT_METADATA_X         1012
 #define IDC_EDIT_METADATA_Y         1013
 #define IDC_EDIT_METADATA_Z         1014

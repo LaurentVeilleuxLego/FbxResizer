@@ -38,6 +38,7 @@ namespace FbxProcessor
         const std::wstring& outputPath,
         ResizeAxis axis,
         double scaleFactor,
+        double rotationDegrees,
         const std::vector<std::wstring>& metadataPropertyNames = {});
 
     // Get detailed error message

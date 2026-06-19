@@ -36,10 +36,12 @@ namespace FbxProcessor
     }
 
     // Forward declarations
-    void ProcessNode(FbxNode* node, ResizeAxis axis, double scaleFactor);
+    void ProcessNode(FbxNode* node, ResizeAxis axis, double scaleFactor, double rotationDegrees);
     void ScaleMesh(FbxMesh* mesh, ResizeAxis axis, double scaleFactor);
     void ScaleSkeleton(FbxNode* node, ResizeAxis axis, double scaleFactor);
     void ScaleCustomProperties(FbxNode* node, ResizeAxis axis, double scaleFactor);
+    void RotateNode(FbxNode* node, ResizeAxis axis, double rotationDegrees);
+    void RotateHierarchy(FbxNode* node, ResizeAxis axis, double rotationDegrees);
 
     bool InitializeFbxSdk(const std::wstring& sdkPath)
     {
@@ -82,6 +84,7 @@ namespace FbxProcessor
         const std::wstring& outputPath,
         ResizeAxis axis,
         double scaleFactor,
+        double rotationDegrees,
         const std::vector<std::wstring>& metadataPropertyNames)
     {
         ProcessResult result;
@@ -159,7 +162,13 @@ namespace FbxProcessor
             if (rootNode)
             {
                 // Recursively process all nodes
-                ProcessNode(rootNode, axis, scaleFactor);
+                ProcessNode(rootNode, axis, scaleFactor, rotationDegrees);
+
+                // Apply rotation to all direct children of root (actual model nodes)
+                if (rotationDegrees != 0.0)
+                {
+                    RotateHierarchy(rootNode, axis, rotationDegrees);
+                }
             }
 
             // Create an exporter
@@ -213,7 +222,7 @@ namespace FbxProcessor
         return result;
     }
 
-    void ProcessNode(FbxNode* node, ResizeAxis axis, double scaleFactor)
+    void ProcessNode(FbxNode* node, ResizeAxis axis, double scaleFactor, double rotationDegrees)
     {
         if (!node) return;
 
@@ -234,7 +243,7 @@ namespace FbxProcessor
         // Recursively process children
         for (int i = 0; i < node->GetChildCount(); ++i)
         {
-            ProcessNode(node->GetChild(i), axis, scaleFactor);
+            ProcessNode(node->GetChild(i), axis, scaleFactor, rotationDegrees);
         }
     }
 
@@ -359,6 +368,71 @@ namespace FbxProcessor
 
             // Move to next property
             prop = node->GetNextProperty(prop);
+        }
+    }
+
+    void RotateNode(FbxNode* node, ResizeAxis axis, double rotationDegrees)
+    {
+        if (!node || rotationDegrees == 0.0) return;
+
+        // Get the current local rotation
+        FbxDouble3 currentRotation = node->LclRotation.Get();
+
+        // Add rotation to the specified axis
+        switch (axis)
+        {
+        case ResizeAxis::X:
+            currentRotation[0] += rotationDegrees;
+            break;
+        case ResizeAxis::Y:
+            currentRotation[1] += rotationDegrees;
+            break;
+        case ResizeAxis::Z:
+            currentRotation[2] += rotationDegrees;
+            break;
+        }
+
+        // Set the new rotation
+        node->LclRotation.Set(currentRotation);
+    }
+
+    void RotateHierarchy(FbxNode* node, ResizeAxis axis, double rotationDegrees)
+    {
+        if (!node || rotationDegrees == 0.0) return;
+
+        // Create rotation matrix
+        FbxAMatrix rotationMatrix;
+        FbxVector4 rotationVector(0, 0, 0, 0);
+
+        switch (axis)
+        {
+        case ResizeAxis::X:
+            rotationVector.Set(rotationDegrees, 0, 0, 0);
+            break;
+        case ResizeAxis::Y:
+            rotationVector.Set(0, rotationDegrees, 0, 0);
+            break;
+        case ResizeAxis::Z:
+            rotationVector.Set(0, 0, rotationDegrees, 0);
+            break;
+        }
+
+        rotationMatrix.SetR(rotationVector);
+
+        // Apply rotation to all direct children of root (the actual model/skeleton hierarchy)
+        for (int i = 0; i < node->GetChildCount(); ++i)
+        {
+            FbxNode* child = node->GetChild(i);
+
+            // Get current transform
+            FbxAMatrix currentTransform = child->EvaluateLocalTransform();
+
+            // Apply rotation
+            FbxAMatrix newTransform = rotationMatrix * currentTransform;
+
+            // Extract and set new rotation
+            FbxVector4 newRotation = newTransform.GetR();
+            child->LclRotation.Set(FbxDouble3(newRotation[0], newRotation[1], newRotation[2]));
         }
     }
 

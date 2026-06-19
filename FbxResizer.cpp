@@ -12,12 +12,14 @@ struct AxisConfig
 {
 	int axisIndex; // 0=X, 1=Y, 2=Z
 	double factor;
+	double rotation; // Rotation in degrees
 
 	std::wstring ToString() const
 	{
 		const wchar_t* axisNames[] = { L"X", L"Y", L"Z" };
 		std::wostringstream oss;
-		oss << axisNames[axisIndex] << L" Axis - Factor: " << std::fixed << std::setprecision(2) << factor;
+		oss << axisNames[axisIndex] << L" Axis - Factor: " << std::fixed << std::setprecision(2) << factor
+			<< L", Rotation: " << std::fixed << std::setprecision(1) << rotation << L"°";
 		return oss.str();
 	}
 };
@@ -28,6 +30,7 @@ HWND g_hEditFbxFolder = NULL;
 HWND g_hListBoxConfigs = NULL;
 HWND g_hComboAxis = NULL;
 HWND g_hEditFactor = NULL;
+HWND g_hEditRotation = NULL;
 HWND g_hEditMetadataX = NULL;
 HWND g_hEditMetadataY = NULL;
 HWND g_hEditMetadataZ = NULL;
@@ -47,6 +50,7 @@ void LogMessage(const std::wstring& message);
 std::wstring GetAxisName(int axisIndex);
 FbxProcessor::ResizeAxis GetResizeAxis(int axisIndex);
 std::wstring FormatResizeFactor(double factor);
+std::wstring FormatRotation(double rotation);
 void SaveSettings();
 void LoadSettings();
 void ResetSettings();
@@ -250,7 +254,7 @@ void CreateControls(HWND hWnd)
 	yPos += 40;
 
 	// Axis Configurations section
-	CreateWindowW(L"STATIC", L"Axis & Resize Factor Configurations",
+	CreateWindowW(L"STATIC", L"Axis, Resize Factor & Rotation Configurations",
 		WS_VISIBLE | WS_CHILD,
 		15, yPos, 650, 20,
 		hWnd, NULL, NULL, NULL);
@@ -279,18 +283,29 @@ void CreateControls(HWND hWnd)
 
 	g_hEditFactor = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"2.00",
 		WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
-		200, yPos, 100, 25,
+		200, yPos, 80, 25,
 		hWnd, (HMENU)IDC_EDIT_FACTOR, NULL, NULL);
 	SendMessage(g_hEditFactor, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
+	CreateWindowW(L"STATIC", L"Rotation (\u00b0):",
+		WS_VISIBLE | WS_CHILD,
+		290, yPos + 3, 70, 20,
+		hWnd, NULL, NULL, NULL);
+
+	g_hEditRotation = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0",
+		WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+		365, yPos, 80, 25,
+		hWnd, (HMENU)IDC_EDIT_ROTATION, NULL, NULL);
+	SendMessage(g_hEditRotation, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+
 	CreateWindowW(L"BUTTON", L"+ Add",
 		WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-		310, yPos, 80, 25,
+		455, yPos, 80, 25,
 		hWnd, (HMENU)IDC_BTN_ADD_CONFIG, NULL, NULL);
 
 	CreateWindowW(L"BUTTON", L"- Remove",
 		WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-		395, yPos, 80, 25,
+		540, yPos, 80, 25,
 		hWnd, (HMENU)IDC_BTN_REMOVE_CONFIG, NULL, NULL);
 
 	yPos += 35;
@@ -320,13 +335,13 @@ void CreateControls(HWND hWnd)
 		30, yPos + 3, 100, 20,
 		hWnd, NULL, NULL, NULL);
 
-	g_hEditSkipString = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"_Resized_",
+	g_hEditSkipString = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"_Axis_",
 		WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
 		140, yPos, 510, 25,
 		hWnd, (HMENU)IDC_EDIT_SKIP_STRING, NULL, NULL);
 	SendMessage(g_hEditSkipString, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
-	CreateWindowW(L"STATIC", L"Example: \"_Resized_\" will skip files like \"model_Resized_Y_2_00.fbx\"",
+	CreateWindowW(L"STATIC", L"Example: \"_Axis_\" will skip files like \"model_Axis_Y_Scaled_2_00.fbx\"",
 		WS_VISIBLE | WS_CHILD,
 		30, yPos + 30, 620, 20,
 		hWnd, NULL, NULL, NULL);
@@ -482,6 +497,22 @@ std::wstring FormatResizeFactor(double factor)
 	return result;
 }
 
+std::wstring FormatRotation(double rotation)
+{
+	std::wostringstream oss;
+	oss << std::fixed << std::setprecision(1) << rotation;
+	std::wstring result = oss.str();
+
+	// Replace decimal point with underscore
+	size_t pos = result.find(L'.');
+	if (pos != std::wstring::npos)
+	{
+		result[pos] = L'_';
+	}
+
+	return result;
+}
+
 void AddAxisConfig()
 {
 	// Get selected axis
@@ -493,6 +524,10 @@ void AddAxisConfig()
 	wchar_t factorText[32];
 	GetWindowTextW(g_hEditFactor, factorText, 32);
 
+	// Get rotation
+	wchar_t rotationText[32];
+	GetWindowTextW(g_hEditRotation, rotationText, 32);
+
 	try
 	{
 		double factor = std::stod(factorText);
@@ -502,10 +537,28 @@ void AddAxisConfig()
 			return;
 		}
 
+		double rotation = 0.0;
+		try
+		{
+			rotation = std::stod(rotationText);
+			// Clamp rotation to -360 to 360 range
+			if (rotation < -360.0 || rotation > 360.0)
+			{
+				MessageBoxW(NULL, L"Rotation must be between -360 and 360 degrees.", L"Error", MB_OK | MB_ICONERROR);
+				return;
+			}
+		}
+		catch (...)
+		{
+			MessageBoxW(NULL, L"Invalid rotation value.", L"Error", MB_OK | MB_ICONERROR);
+			return;
+		}
+
 		// Add configuration
 		AxisConfig config;
 		config.axisIndex = axisIndex;
 		config.factor = factor;
+		config.rotation = rotation;
 		g_axisConfigs.push_back(config);
 
 		// Refresh list
@@ -657,7 +710,16 @@ void ProcessFBXFiles(HWND hWnd)
 				{
 					std::wstring axis = GetAxisName(config.axisIndex);
 					std::wstring formattedFactor = FormatResizeFactor(config.factor);
-					std::wstring outputFilename = filename + L"_Resized_" + axis + L"_" + formattedFactor + L".fbx";
+					std::wstring formattedRotation = FormatRotation(config.rotation);
+
+					// Build output filename: model_Axis_Y_Scaled_2_00_Rotated_90_0.fbx
+					std::wstring outputFilename = filename + L"_Axis_" + axis + L"_Scaled_" + formattedFactor;
+					if (config.rotation != 0.0)
+					{
+						outputFilename += L"_Rotated_" + formattedRotation;
+					}
+					outputFilename += L".fbx";
+
 					std::wstring outputPath = entry.path().parent_path().wstring() + L"\\" + outputFilename;
 
 					// Check if output file already exists and will be overwritten
@@ -675,6 +737,7 @@ void ProcessFBXFiles(HWND hWnd)
 						outputPath,
 						GetResizeAxis(config.axisIndex),
 						config.factor,
+						config.rotation,
 						metadataProps);
 
 					if (result.success)
@@ -842,6 +905,7 @@ void SaveSettings()
 	{
 		std::wstring axisKey = L"Config" + std::to_wstring(i) + L"_Axis";
 		std::wstring factorKey = L"Config" + std::to_wstring(i) + L"_Factor";
+		std::wstring rotationKey = L"Config" + std::to_wstring(i) + L"_Rotation";
 
 		SetRegistryInt(axisKey.c_str(), g_axisConfigs[i].axisIndex);
 
@@ -849,6 +913,11 @@ void SaveSettings()
 		std::wostringstream oss;
 		oss << std::fixed << std::setprecision(2) << g_axisConfigs[i].factor;
 		SetRegistryString(factorKey.c_str(), oss.str().c_str());
+
+		// Save rotation as string to preserve precision
+		std::wostringstream ossRot;
+		ossRot << std::fixed << std::setprecision(1) << g_axisConfigs[i].rotation;
+		SetRegistryString(rotationKey.c_str(), ossRot.str().c_str());
 	}
 }
 
@@ -873,7 +942,7 @@ void LoadSettings()
 	std::wstring metadataZ = GetRegistryString(L"MetadataZ", L"depth, length, z");
 	SetWindowTextW(g_hEditMetadataZ, metadataZ.c_str());
 
-	std::wstring skipString = GetRegistryString(L"SkipString", L"_Resized_");
+	std::wstring skipString = GetRegistryString(L"SkipString", L"_Axis_");
 	SetWindowTextW(g_hEditSkipString, skipString.c_str());
 
 	// Load axis configurations
@@ -886,16 +955,26 @@ void LoadSettings()
 		{
 			std::wstring axisKey = L"Config" + std::to_wstring(i) + L"_Axis";
 			std::wstring factorKey = L"Config" + std::to_wstring(i) + L"_Factor";
+			std::wstring rotationKey = L"Config" + std::to_wstring(i) + L"_Rotation";
 
 			int axisIndex = GetRegistryInt(axisKey.c_str(), 1); // Default Y
 			std::wstring factorStr = GetRegistryString(factorKey.c_str(), L"2.00");
+			std::wstring rotationStr = GetRegistryString(rotationKey.c_str(), L"0");
 
 			try
 			{
 				double factor = std::stod(factorStr);
+				double rotation = 0.0;
+				try
+				{
+					rotation = std::stod(rotationStr);
+				}
+				catch (...) {}
+
 				AxisConfig config;
 				config.axisIndex = axisIndex;
 				config.factor = factor;
+				config.rotation = rotation;
 				g_axisConfigs.push_back(config);
 			}
 			catch (...) {}
@@ -907,6 +986,7 @@ void LoadSettings()
 		AxisConfig config;
 		config.axisIndex = 1; // Y axis
 		config.factor = 2.0;
+		config.rotation = 0.0;
 		g_axisConfigs.push_back(config);
 	}
 
