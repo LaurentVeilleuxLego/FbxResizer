@@ -7,19 +7,36 @@
 using namespace std;
 namespace fs = std::filesystem;
 
+// Structure to hold axis configuration
+struct AxisConfig
+{
+	int axisIndex; // 0=X, 1=Y, 2=Z
+	double factor;
+
+	std::wstring ToString() const
+	{
+		const wchar_t* axisNames[] = { L"X", L"Y", L"Z" };
+		std::wostringstream oss;
+		oss << axisNames[axisIndex] << L" Axis - Factor: " << std::fixed << std::setprecision(2) << factor;
+		return oss.str();
+	}
+};
+
 // Global variables
 HWND g_hEditSdkPath = NULL;
 HWND g_hEditFbxFolder = NULL;
-HWND g_hRadioX = NULL;
-HWND g_hRadioY = NULL;
-HWND g_hRadioZ = NULL;
-HWND g_hEditResizeFactor = NULL;
+HWND g_hListBoxConfigs = NULL;
+HWND g_hComboAxis = NULL;
+HWND g_hEditFactor = NULL;
 HWND g_hEditMetadataX = NULL;
 HWND g_hEditMetadataY = NULL;
 HWND g_hEditMetadataZ = NULL;
+HWND g_hEditSkipString = NULL;
 HWND g_hEditLog = NULL;
 HFONT g_hFont = NULL;
 bool g_bLoadingSettings = false; // Flag to prevent saving during load
+
+std::vector<AxisConfig> g_axisConfigs; // Store axis configurations
 
 // Forward declarations
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -27,11 +44,15 @@ void CreateControls(HWND hWnd);
 void BrowseForFolder(HWND hWnd, HWND hEdit, const wchar_t* title);
 void ProcessFBXFiles(HWND hWnd);
 void LogMessage(const std::wstring& message);
-std::wstring GetAxisName();
+std::wstring GetAxisName(int axisIndex);
+FbxProcessor::ResizeAxis GetResizeAxis(int axisIndex);
 std::wstring FormatResizeFactor(double factor);
 void SaveSettings();
 void LoadSettings();
 void ResetSettings();
+void AddAxisConfig();
+void RemoveAxisConfig();
+void RefreshConfigList();
 std::wstring GetRegistryString(const wchar_t* valueName, const wchar_t* defaultValue);
 void SetRegistryString(const wchar_t* valueName, const wchar_t* value);
 int GetRegistryInt(const wchar_t* valueName, int defaultValue);
@@ -128,10 +149,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 		case IDC_EDIT_SDK_PATH:
 		case IDC_EDIT_FBX_FOLDER:
-		case IDC_EDIT_RESIZE_FACTOR:
 		case IDC_EDIT_METADATA_X:
 		case IDC_EDIT_METADATA_Y:
 		case IDC_EDIT_METADATA_Z:
+		case IDC_EDIT_SKIP_STRING:
 			// Save on text change
 			if (wmEvent == EN_CHANGE)
 			{
@@ -139,14 +160,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			}
 			break;
 
-		case IDC_RADIO_X:
-		case IDC_RADIO_Y:
-		case IDC_RADIO_Z:
-			// Save on radio button click
-			if (wmEvent == BN_CLICKED)
-			{
-				SaveSettings();
-			}
+		case IDC_BTN_ADD_CONFIG:
+			AddAxisConfig();
+			SaveSettings();
+			break;
+
+		case IDC_BTN_REMOVE_CONFIG:
+			RemoveAxisConfig();
+			SaveSettings();
 			break;
 
 		case IDC_BTN_PROCESS:
@@ -228,55 +249,88 @@ void CreateControls(HWND hWnd)
 		hWnd, (HMENU)IDC_BTN_BROWSE_FBX, NULL, NULL);
 	yPos += 40;
 
-	// Select Resize Axis section
-	CreateWindowW(L"STATIC", L"Select Resize Axis",
+	// Axis Configurations section
+	CreateWindowW(L"STATIC", L"Axis & Resize Factor Configurations",
 		WS_VISIBLE | WS_CHILD,
 		15, yPos, 650, 20,
 		hWnd, NULL, NULL, NULL);
 	yPos += 25;
 
-	g_hRadioX = CreateWindowW(L"BUTTON", L"X Axis",
-		WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON,
-		30, yPos, 80, 20,
-		hWnd, (HMENU)IDC_RADIO_X, NULL, NULL);
+	// Add configuration controls
+	CreateWindowW(L"STATIC", L"Axis:",
+		WS_VISIBLE | WS_CHILD,
+		30, yPos + 3, 40, 20,
+		hWnd, NULL, NULL, NULL);
 
-	g_hRadioY = CreateWindowW(L"BUTTON", L"Y Axis",
-		WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON,
-		130, yPos, 80, 20,
-		hWnd, (HMENU)IDC_RADIO_Y, NULL, NULL);
+	g_hComboAxis = CreateWindowExW(0, L"COMBOBOX", NULL,
+		WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
+		75, yPos, 60, 100,
+		hWnd, (HMENU)IDC_COMBO_AXIS, NULL, NULL);
+	SendMessage(g_hComboAxis, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+	SendMessageW(g_hComboAxis, CB_ADDSTRING, 0, (LPARAM)L"X");
+	SendMessageW(g_hComboAxis, CB_ADDSTRING, 0, (LPARAM)L"Y");
+	SendMessageW(g_hComboAxis, CB_ADDSTRING, 0, (LPARAM)L"Z");
+	SendMessage(g_hComboAxis, CB_SETCURSEL, 1, 0); // Default to Y
 
-	g_hRadioZ = CreateWindowW(L"BUTTON", L"Z Axis",
-		WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON,
-		230, yPos, 80, 20,
-		hWnd, (HMENU)IDC_RADIO_Z, NULL, NULL);
+	CreateWindowW(L"STATIC", L"Factor:",
+		WS_VISIBLE | WS_CHILD,
+		145, yPos + 3, 50, 20,
+		hWnd, NULL, NULL, NULL);
 
-	// Set Y Axis as default
-	SendMessage(g_hRadioY, BM_SETCHECK, BST_CHECKED, 0);
+	g_hEditFactor = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"2.00",
+		WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+		200, yPos, 100, 25,
+		hWnd, (HMENU)IDC_EDIT_FACTOR, NULL, NULL);
+	SendMessage(g_hEditFactor, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+
+	CreateWindowW(L"BUTTON", L"+ Add",
+		WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+		310, yPos, 80, 25,
+		hWnd, (HMENU)IDC_BTN_ADD_CONFIG, NULL, NULL);
+
+	CreateWindowW(L"BUTTON", L"- Remove",
+		WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+		395, yPos, 80, 25,
+		hWnd, (HMENU)IDC_BTN_REMOVE_CONFIG, NULL, NULL);
+
 	yPos += 35;
 
-	// Resize Amount section
-	CreateWindowW(L"STATIC", L"Resize Amount (Multiplier)",
+	// List of configurations
+	g_hListBoxConfigs = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
+		WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+		30, yPos, 620, 80,
+		hWnd, (HMENU)IDC_LISTBOX_CONFIGS, NULL, NULL);
+	SendMessage(g_hListBoxConfigs, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+
+	CreateWindowW(L"STATIC", L"Tip: Add multiple configurations. Each will create a separate output file.",
+		WS_VISIBLE | WS_CHILD,
+		30, yPos + 85, 620, 20,
+		hWnd, NULL, NULL, NULL);
+	yPos += 115;
+
+	// Skip String section
+	CreateWindowW(L"STATIC", L"Skip Files Containing (leave empty to process all files)",
 		WS_VISIBLE | WS_CHILD,
 		15, yPos, 650, 20,
 		hWnd, NULL, NULL, NULL);
 	yPos += 25;
 
-	CreateWindowW(L"STATIC", L"Resize Factor:",
+	CreateWindowW(L"STATIC", L"Skip String:",
 		WS_VISIBLE | WS_CHILD,
 		30, yPos + 3, 100, 20,
 		hWnd, NULL, NULL, NULL);
 
-	g_hEditResizeFactor = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"2.00",
+	g_hEditSkipString = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"_Resized_",
 		WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
-		140, yPos, 120, 25,
-		hWnd, (HMENU)IDC_EDIT_RESIZE_FACTOR, NULL, NULL);
-	SendMessage(g_hEditResizeFactor, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+		140, yPos, 510, 25,
+		hWnd, (HMENU)IDC_EDIT_SKIP_STRING, NULL, NULL);
+	SendMessage(g_hEditSkipString, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
-	CreateWindowW(L"STATIC", L"Example: 2.0 = double size, 0.5 = half size",
+	CreateWindowW(L"STATIC", L"Example: \"_Resized_\" will skip files like \"model_Resized_Y_2_00.fbx\"",
 		WS_VISIBLE | WS_CHILD,
-		270, yPos + 3, 350, 20,
+		30, yPos + 30, 620, 20,
 		hWnd, NULL, NULL, NULL);
-	yPos += 40;
+	yPos += 65;
 
 	// Metadata Property Names section
 	CreateWindowW(L"STATIC", L"Metadata Property Names to Scale (comma-separated, per axis)",
@@ -390,14 +444,26 @@ void LogMessage(const std::wstring& message)
 	SendMessageW(g_hEditLog, EM_REPLACESEL, FALSE, (LPARAM)(message + L"\r\n").c_str());
 }
 
-std::wstring GetAxisName()
+std::wstring GetAxisName(int axisIndex)
 {
-	if (SendMessage(g_hRadioX, BM_GETCHECK, 0, 0) == BST_CHECKED)
-		return L"X";
-	else if (SendMessage(g_hRadioY, BM_GETCHECK, 0, 0) == BST_CHECKED)
-		return L"Y";
-	else
-		return L"Z";
+	switch (axisIndex)
+	{
+	case 0: return L"X";
+	case 1: return L"Y";
+	case 2: return L"Z";
+	default: return L"Y";
+	}
+}
+
+FbxProcessor::ResizeAxis GetResizeAxis(int axisIndex)
+{
+	switch (axisIndex)
+	{
+	case 0: return FbxProcessor::ResizeAxis::X;
+	case 1: return FbxProcessor::ResizeAxis::Y;
+	case 2: return FbxProcessor::ResizeAxis::Z;
+	default: return FbxProcessor::ResizeAxis::Y;
+	}
 }
 
 std::wstring FormatResizeFactor(double factor)
@@ -416,19 +482,76 @@ std::wstring FormatResizeFactor(double factor)
 	return result;
 }
 
+void AddAxisConfig()
+{
+	// Get selected axis
+	int axisIndex = (int)SendMessage(g_hComboAxis, CB_GETCURSEL, 0, 0);
+	if (axisIndex == CB_ERR)
+		axisIndex = 1; // Default to Y
+
+	// Get factor
+	wchar_t factorText[32];
+	GetWindowTextW(g_hEditFactor, factorText, 32);
+
+	try
+	{
+		double factor = std::stod(factorText);
+		if (factor <= 0)
+		{
+			MessageBoxW(NULL, L"Factor must be greater than 0.", L"Error", MB_OK | MB_ICONERROR);
+			return;
+		}
+
+		// Add configuration
+		AxisConfig config;
+		config.axisIndex = axisIndex;
+		config.factor = factor;
+		g_axisConfigs.push_back(config);
+
+		// Refresh list
+		RefreshConfigList();
+	}
+	catch (...)
+	{
+		MessageBoxW(NULL, L"Invalid factor value.", L"Error", MB_OK | MB_ICONERROR);
+	}
+}
+
+void RemoveAxisConfig()
+{
+	// Get selected item
+	int selIndex = (int)SendMessage(g_hListBoxConfigs, LB_GETCURSEL, 0, 0);
+	if (selIndex != LB_ERR && selIndex >= 0 && selIndex < (int)g_axisConfigs.size())
+	{
+		g_axisConfigs.erase(g_axisConfigs.begin() + selIndex);
+		RefreshConfigList();
+	}
+}
+
+void RefreshConfigList()
+{
+	// Clear list
+	SendMessage(g_hListBoxConfigs, LB_RESETCONTENT, 0, 0);
+
+	// Add all configurations
+	for (const auto& config : g_axisConfigs)
+	{
+		std::wstring displayText = config.ToString();
+		SendMessageW(g_hListBoxConfigs, LB_ADDSTRING, 0, (LPARAM)displayText.c_str());
+	}
+}
+
 void ProcessFBXFiles(HWND hWnd)
 {
 	// Get input values
 	wchar_t sdkPath[MAX_PATH];
 	wchar_t fbxFolder[MAX_PATH];
-	wchar_t resizeFactorText[32];
 	wchar_t metadataXText[1024];
 	wchar_t metadataYText[1024];
 	wchar_t metadataZText[1024];
 
 	GetWindowTextW(g_hEditSdkPath, sdkPath, MAX_PATH);
 	GetWindowTextW(g_hEditFbxFolder, fbxFolder, MAX_PATH);
-	GetWindowTextW(g_hEditResizeFactor, resizeFactorText, 32);
 	GetWindowTextW(g_hEditMetadataX, metadataXText, 1024);
 	GetWindowTextW(g_hEditMetadataY, metadataYText, 1024);
 	GetWindowTextW(g_hEditMetadataZ, metadataZText, 1024);
@@ -440,70 +563,44 @@ void ProcessFBXFiles(HWND hWnd)
 		return;
 	}
 
-	// Parse resize factor
-	double resizeFactor = 2.0;
-	try
+	// Check if we have any configurations
+	if (g_axisConfigs.empty())
 	{
-		resizeFactor = std::stod(resizeFactorText);
-		if (resizeFactor <= 0)
-		{
-			MessageBoxW(hWnd, L"Resize factor must be greater than 0.", L"Error", MB_OK | MB_ICONERROR);
-			return;
-		}
-	}
-	catch (...)
-	{
-		MessageBoxW(hWnd, L"Invalid resize factor. Please enter a valid number.", L"Error", MB_OK | MB_ICONERROR);
+		MessageBoxW(hWnd, L"Please add at least one axis configuration using the + Add button.", L"Error", MB_OK | MB_ICONERROR);
 		return;
+	}
+
+	// Parse metadata property names for each axis
+	std::vector<std::vector<std::wstring>> metadataPropertiesByAxis(3);
+	std::wstring metadataTexts[] = { metadataXText, metadataYText, metadataZText };
+
+	for (int axisIdx = 0; axisIdx < 3; ++axisIdx)
+	{
+		std::wstringstream ss(metadataTexts[axisIdx]);
+		std::wstring token;
+		while (std::getline(ss, token, L','))
+		{
+			// Trim whitespace
+			size_t start = token.find_first_not_of(L" \t");
+			size_t end = token.find_last_not_of(L" \t");
+			if (start != std::wstring::npos && end != std::wstring::npos)
+			{
+				metadataPropertiesByAxis[axisIdx].push_back(token.substr(start, end - start + 1));
+			}
+		}
 	}
 
 	// Clear log
 	SetWindowTextW(g_hEditLog, L"");
 
-	// Get axis and formatted factor
-	std::wstring axis = GetAxisName();
-	std::wstring formattedFactor = FormatResizeFactor(resizeFactor);
-
-	// Determine resize axis enum and select appropriate metadata property list
-	FbxProcessor::ResizeAxis resizeAxis = FbxProcessor::ResizeAxis::Y;
-	std::wstring metadataText;
-
-	if (axis == L"X")
-	{
-		resizeAxis = FbxProcessor::ResizeAxis::X;
-		metadataText = metadataXText;
-	}
-	else if (axis == L"Z")
-	{
-		resizeAxis = FbxProcessor::ResizeAxis::Z;
-		metadataText = metadataZText;
-	}
-	else // Y axis
-	{
-		resizeAxis = FbxProcessor::ResizeAxis::Y;
-		metadataText = metadataYText;
-	}
-
-	// Parse metadata property names for the selected axis (comma-separated)
-	std::vector<std::wstring> metadataPropertyNames;
-	std::wstringstream ss(metadataText);
-	std::wstring token;
-	while (std::getline(ss, token, L','))
-	{
-		// Trim whitespace
-		size_t start = token.find_first_not_of(L" \t");
-		size_t end = token.find_last_not_of(L" \t");
-		if (start != std::wstring::npos && end != std::wstring::npos)
-		{
-			metadataPropertyNames.push_back(token.substr(start, end - start + 1));
-		}
-	}
-
 	LogMessage(L"=== Starting FBX Processing ===");
 	LogMessage(L"SDK Path: " + std::wstring(sdkPath));
 	LogMessage(L"FBX Folder: " + std::wstring(fbxFolder));
-	LogMessage(L"Resize Axis: " + axis);
-	LogMessage(L"Resize Factor: " + std::to_wstring(resizeFactor));
+	LogMessage(L"Configurations:");
+	for (const auto& config : g_axisConfigs)
+	{
+		LogMessage(L"  " + config.ToString());
+	}
 	LogMessage(L"");
 
 	// Check if folder exists
@@ -526,10 +623,17 @@ void ProcessFBXFiles(HWND hWnd)
 	LogMessage(L"FBX SDK initialized successfully");
 	LogMessage(L"");
 
+	// Get skip string from UI
+	wchar_t skipStringBuffer[256];
+	GetWindowTextW(g_hEditSkipString, skipStringBuffer, 256);
+	std::wstring skipString(skipStringBuffer);
+
 	// Process FBX files
 	int processedCount = 0;
 	int successCount = 0;
 	int skippedCount = 0;
+	int totalOutputs = 0;
+
 	try
 	{
 		for (const auto& entry : fs::directory_iterator(fbxFolder))
@@ -538,70 +642,81 @@ void ProcessFBXFiles(HWND hWnd)
 			{
 				std::wstring filename = entry.path().stem().wstring();
 
-				// Skip files that already have "_Resized_" in their name to prevent cascading
-				if (filename.find(L"_Resized_") != std::wstring::npos)
+				// Skip files that contain the skip string (if not empty)
+				if (!skipString.empty() && filename.find(skipString) != std::wstring::npos)
 				{
 					skippedCount++;
 					continue;
 				}
 
-				std::wstring outputFilename = filename + L"_Resized_" + axis + L"_" + formattedFactor + L".fbx";
-				std::wstring outputPath = entry.path().parent_path().wstring() + L"\\" + outputFilename;
-
-				// Check if output file already exists and will be overwritten
-				if (fs::exists(outputPath))
-				{
-					LogMessage(L"Overwriting: " + outputFilename);
-				}
-
 				LogMessage(L"Processing: " + filename + L".fbx");
+				processedCount++;
 
-				// Process the FBX file
-				FbxProcessor::ProcessResult result = FbxProcessor::ProcessFbxFile(
-					entry.path().wstring(),
-					outputPath,
-					resizeAxis,
-					resizeFactor,
-					metadataPropertyNames);
-
-				if (result.success)
+				// Process for each configuration
+				for (const auto& config : g_axisConfigs)
 				{
-					LogMessage(L"  ✓ Output: " + outputFilename);
+					std::wstring axis = GetAxisName(config.axisIndex);
+					std::wstring formattedFactor = FormatResizeFactor(config.factor);
+					std::wstring outputFilename = filename + L"_Resized_" + axis + L"_" + formattedFactor + L".fbx";
+					std::wstring outputPath = entry.path().parent_path().wstring() + L"\\" + outputFilename;
 
-					// Log metadata scaling if any occurred
-					for (const auto& metadataLog : result.metadataLogs)
+					// Check if output file already exists and will be overwritten
+					if (fs::exists(outputPath))
 					{
-						LogMessage(metadataLog);
+						LogMessage(L"  Overwriting: " + outputFilename);
 					}
 
-					successCount++;
-				}
-				else
-				{
-					LogMessage(L"  ✗ Error: " + result.message);
-				}
+					// Get metadata properties for this axis
+					const auto& metadataProps = metadataPropertiesByAxis[config.axisIndex];
 
-				processedCount++;
+					// Process the FBX file
+					FbxProcessor::ProcessResult result = FbxProcessor::ProcessFbxFile(
+						entry.path().wstring(),
+						outputPath,
+						GetResizeAxis(config.axisIndex),
+						config.factor,
+						metadataProps);
+
+					if (result.success)
+					{
+						LogMessage(L"  ✓ " + axis + L"-axis: " + outputFilename);
+
+						// Log metadata scaling if any occurred
+						for (const auto& metadataLog : result.metadataLogs)
+						{
+							LogMessage(L"    " + metadataLog);
+						}
+
+						successCount++;
+						totalOutputs++;
+					}
+					else
+					{
+						LogMessage(L"  ✗ " + axis + L"-axis Error: " + result.message);
+					}
+				}
 			}
 		}
 
 		LogMessage(L"");
 		LogMessage(L"=== Processing Complete ===");
-		LogMessage(L"Total files processed: " + std::to_wstring(processedCount));
+		LogMessage(L"Input files processed: " + std::to_wstring(processedCount));
+		LogMessage(L"Output files created: " + std::to_wstring(totalOutputs));
 		LogMessage(L"Successful: " + std::to_wstring(successCount));
-		LogMessage(L"Failed: " + std::to_wstring(processedCount - successCount));
+		LogMessage(L"Failed: " + std::to_wstring(totalOutputs - successCount));
 		if (skippedCount > 0)
 		{
-			LogMessage(L"Skipped (already resized): " + std::to_wstring(skippedCount));
+			LogMessage(L"Skipped: " + std::to_wstring(skippedCount));
 		}
 
 		// Cleanup FBX SDK
 		FbxProcessor::CleanupFbxSdk();
 
-		std::wstring message = L"Processing complete!\n\nFiles processed: " + 
-			std::to_wstring(processedCount) + L"\nSuccessful: " + 
+		std::wstring message = L"Processing complete!\n\nInput files: " + 
+			std::to_wstring(processedCount) + L"\nOutput files: " + 
+			std::to_wstring(totalOutputs) + L"\nSuccessful: " + 
 			std::to_wstring(successCount) + L"\nFailed: " + 
-			std::to_wstring(processedCount - successCount);
+			std::to_wstring(totalOutputs - successCount);
 
 		if (skippedCount > 0)
 		{
@@ -707,9 +822,6 @@ void SaveSettings()
 	GetWindowTextW(g_hEditFbxFolder, buffer, 2048);
 	SetRegistryString(L"FbxFolder", buffer);
 
-	GetWindowTextW(g_hEditResizeFactor, buffer, 2048);
-	SetRegistryString(L"ResizeFactor", buffer);
-
 	GetWindowTextW(g_hEditMetadataX, buffer, 2048);
 	SetRegistryString(L"MetadataX", buffer);
 
@@ -719,13 +831,25 @@ void SaveSettings()
 	GetWindowTextW(g_hEditMetadataZ, buffer, 2048);
 	SetRegistryString(L"MetadataZ", buffer);
 
-	// Save selected axis
-	int selectedAxis = 1; // Default Y
-	if (SendMessage(g_hRadioX, BM_GETCHECK, 0, 0) == BST_CHECKED)
-		selectedAxis = 0;
-	else if (SendMessage(g_hRadioZ, BM_GETCHECK, 0, 0) == BST_CHECKED)
-		selectedAxis = 2;
-	SetRegistryInt(L"SelectedAxis", selectedAxis);
+	GetWindowTextW(g_hEditSkipString, buffer, 2048);
+	SetRegistryString(L"SkipString", buffer);
+
+	// Save axis configurations count
+	SetRegistryInt(L"ConfigCount", (int)g_axisConfigs.size());
+
+	// Save each configuration
+	for (size_t i = 0; i < g_axisConfigs.size(); ++i)
+	{
+		std::wstring axisKey = L"Config" + std::to_wstring(i) + L"_Axis";
+		std::wstring factorKey = L"Config" + std::to_wstring(i) + L"_Factor";
+
+		SetRegistryInt(axisKey.c_str(), g_axisConfigs[i].axisIndex);
+
+		// Save factor as string to preserve precision
+		std::wostringstream oss;
+		oss << std::fixed << std::setprecision(2) << g_axisConfigs[i].factor;
+		SetRegistryString(factorKey.c_str(), oss.str().c_str());
+	}
 }
 
 void LoadSettings()
@@ -740,9 +864,6 @@ void LoadSettings()
 	std::wstring fbxFolder = GetRegistryString(L"FbxFolder", L"C:\\Git\\Atom2\\TestProjects\\Play_Atom\\Content\\VAD\\ModularSetup");
 	SetWindowTextW(g_hEditFbxFolder, fbxFolder.c_str());
 
-	std::wstring resizeFactor = GetRegistryString(L"ResizeFactor", L"2.00");
-	SetWindowTextW(g_hEditResizeFactor, resizeFactor.c_str());
-
 	std::wstring metadataX = GetRegistryString(L"MetadataX", L"width, x");
 	SetWindowTextW(g_hEditMetadataX, metadataX.c_str());
 
@@ -752,21 +873,44 @@ void LoadSettings()
 	std::wstring metadataZ = GetRegistryString(L"MetadataZ", L"depth, length, z");
 	SetWindowTextW(g_hEditMetadataZ, metadataZ.c_str());
 
-	// Load selected axis
-	int selectedAxis = GetRegistryInt(L"SelectedAxis", 1); // Default Y
+	std::wstring skipString = GetRegistryString(L"SkipString", L"_Resized_");
+	SetWindowTextW(g_hEditSkipString, skipString.c_str());
 
-	// Uncheck all radio buttons first
-	SendMessage(g_hRadioX, BM_SETCHECK, BST_UNCHECKED, 0);
-	SendMessage(g_hRadioY, BM_SETCHECK, BST_UNCHECKED, 0);
-	SendMessage(g_hRadioZ, BM_SETCHECK, BST_UNCHECKED, 0);
+	// Load axis configurations
+	g_axisConfigs.clear();
+	int configCount = GetRegistryInt(L"ConfigCount", 1); // Default to 1 config
 
-	// Check the selected one
-	if (selectedAxis == 0)
-		SendMessage(g_hRadioX, BM_SETCHECK, BST_CHECKED, 0);
-	else if (selectedAxis == 2)
-		SendMessage(g_hRadioZ, BM_SETCHECK, BST_CHECKED, 0);
+	if (configCount > 0)
+	{
+		for (int i = 0; i < configCount; ++i)
+		{
+			std::wstring axisKey = L"Config" + std::to_wstring(i) + L"_Axis";
+			std::wstring factorKey = L"Config" + std::to_wstring(i) + L"_Factor";
+
+			int axisIndex = GetRegistryInt(axisKey.c_str(), 1); // Default Y
+			std::wstring factorStr = GetRegistryString(factorKey.c_str(), L"2.00");
+
+			try
+			{
+				double factor = std::stod(factorStr);
+				AxisConfig config;
+				config.axisIndex = axisIndex;
+				config.factor = factor;
+				g_axisConfigs.push_back(config);
+			}
+			catch (...) {}
+		}
+	}
 	else
-		SendMessage(g_hRadioY, BM_SETCHECK, BST_CHECKED, 0);
+	{
+		// Add default configuration if none exists
+		AxisConfig config;
+		config.axisIndex = 1; // Y axis
+		config.factor = 2.0;
+		g_axisConfigs.push_back(config);
+	}
+
+	RefreshConfigList();
 
 	// Clear flag - now changes will be saved
 	g_bLoadingSettings = false;
